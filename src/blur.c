@@ -243,6 +243,15 @@ static float kernel_2d_cauchy(float x, float y, float *p)
 	return r;
 }
 
+static float kernel_2d_bicauchy(float x, float y, float *p)
+{
+	float sigma = p[1];
+
+	float a = (x*x + y*y)/(sigma*sigma);
+	float r = 1/(1+a*a);
+	return r;
+}
+
 static float kernel_2d_powerlaw2(float x, float y, float *p)
 {
 	float sigma = p[1];
@@ -250,6 +259,24 @@ static float kernel_2d_powerlaw2(float x, float y, float *p)
 
 	float a = (x*x + y*y)/(sigma*sigma);
 	float r = 1.0/(1.0 + a*a);
+	return r;
+}
+
+static float kernel_2d_invr(float x, float y, float *p)
+{
+	float sigma = p[1];
+
+	float a = hypot(x, y) / sigma;
+	float r = a ? 1/a : 1;
+	return r;
+}
+
+static float kernel_2d_r2logr(float x, float y, float *p)
+{
+	float sigma = p[1];
+
+	float a = hypot(x, y) / sigma;
+	float r = a ? a*a*log(a) : 1;
 	return r;
 }
 
@@ -340,9 +367,12 @@ void blur_2d(float *y, float *x, int w, int h, int pd,
 	case 'g': f = kernel_2d_gaussian; break;
 	case 'l': f = kernel_2d_laplace;  break;
 	case 'c': f = kernel_2d_cauchy;   break;
+	case 'k': f = kernel_2d_bicauchy;   break;
 	case 'd': f = kernel_2d_disk;     break;
 	case 's': f = kernel_2d_square;   break;
 	case 'p': f = kernel_2d_powerlaw2;   break;
+	case 'i': f = kernel_2d_invr;   break;
+	case 't': f = kernel_2d_r2logr;   break;
 	default: fail("unrecognized kernel name \"%s\"", kernel_id);
 	}
 
