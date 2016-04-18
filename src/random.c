@@ -21,7 +21,9 @@ static void xsrand(unsigned int seed)
 #ifdef RNG_SPECIFIC_WELL1024
 	well1024_seed(seed);
 #else
+#  ifndef __OpenBSD__
 	srand(seed);
+#  endif
 #endif
 }
 
@@ -35,7 +37,11 @@ static int xrand(void)
 	r = RAND_MAX * well1024();
 	return r;
 #else
+#ifdef __OpenBSD__
+	return arc4random();
+#else
 	return rand();
+#endif
 #endif
 }
 
@@ -54,7 +60,11 @@ static double random_uniform(void)
 	r = well1024();
 	return r;
 #else
+#ifdef __OpenBSD__
+	return arc4random_uniform(RAND_MAX)/(0.0+RAND_MAX);
+#else
 	return rand()/(1.0+RAND_MAX);
+#endif
 #endif
 }
 
@@ -82,7 +92,11 @@ int randombounds(int a, int b)
 		return randombounds(b, a);
 	if (b == a)
 		return b;
+#ifdef __OpenBSD__
+	return a + arc4random_uniform(b - a + 1);
+#else
 	return a + rand()%(b - a + 1);
+#endif
 }
 
 static double random_laplace(void)
@@ -114,6 +128,40 @@ static double random_exponential(void)
 static double random_pareto(void)
 {
 	return exp(random_exponential());
+}
+
+// This function samples a stable variable of parameters (alpha,beta)
+//
+// The algorithm is copied verbatim from formulas (2.3) and (2.4) in
+//     Chambers, J. M.; Mallows, C. L.; Stuck, B. W. (1976).
+//     "A Method for Simulating Stable Random Variables".
+//     Journal of the American Statistical Association 71 (354): 340–344.
+//     doi:10.1080/01621459.1976.10480344.
+//
+// Observation: the algorithm is numerically imprecise when alpha approaches 1.
+// TODO: implement appropriate rearrangements as suggested in the article.
+static double random_stable(double alpha, double beta)
+{
+	double U = (random_uniform() - 0.5) * M_PI;
+	double W = random_exponential();
+	double z = -beta * tan(M_PI * alpha / 2);
+	double x = alpha == 1 ? M_PI/2 : atan(-z) / alpha;
+	//fprintf(stderr, "U=%g W=%g z=%g x=%g\t\t", U, W, z, x);
+	double r = NAN;
+	if (alpha == 1) {
+		double a = (M_PI/2 + beta * U) * tan(U);
+		double b = log(((M_PI/2) * W * cos(U)) / ((M_PI/2) + beta * U));
+		//fprintf(stderr, "a=%g b=%g\n", a, b);
+		r = (a - beta * b) / x;
+	} else {
+		double a = pow(1 + z * z, 1 / (2*alpha));
+		double b = sin(alpha * (U + x)) / pow(cos(U), 1/alpha);
+		double c = pow(cos(U - alpha*(U + x)) / W, (1 - alpha) / alpha);
+		//fprintf(stderr, "a=%g b=%g c=%g\n", a, b, c);
+		r = a * b * c;
+	}
+	//fprintf(stderr, "s(%g,%g) = %g\n", alpha, beta, r);
+	return r;
 }
 
 #endif//_RANDOM_C

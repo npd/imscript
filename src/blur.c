@@ -238,8 +238,8 @@ static float kernel_2d_cauchy(float x, float y, float *p)
 {
 	float sigma = p[1];
 
-	float a = (x*x + y*y)/(sigma*sigma);
-	float r = 1/(1+a);
+	float a = hypot(x,y)/sigma;
+	float r = 1/(1+a*a);
 	return r;
 }
 
@@ -249,6 +249,15 @@ static float kernel_2d_bicauchy(float x, float y, float *p)
 
 	float a = (x*x + y*y)/(sigma*sigma);
 	float r = 1/(1+a*a);
+	return r;
+}
+
+static float kernel_2d_logcauchy(float x, float y, float *p)
+{
+	float sigma = p[1];
+
+	float a = hypot(x,y)/sigma;
+	float r = a ? 1/(1+log(a)*log(a)) : 1;
 	return r;
 }
 
@@ -262,14 +271,54 @@ static float kernel_2d_powerlaw2(float x, float y, float *p)
 	return r;
 }
 
+static float kernel_2d_pareto(float x, float y, float *p)
+{
+	float alpha = p[1];
+
+	float v = hypot(x, y);
+	float r = v ? pow(v, alpha) : 1;
+	return r;
+}
+
 static float kernel_2d_invr(float x, float y, float *p)
 {
 	float sigma = p[1];
 
 	float a = hypot(x, y) / sigma;
+	//float a = hypot(x, y);
 	float r = a ? 1/a : 1;
+	//float r = a ? 1/a : 0;
 	return r;
 }
+
+static float kernel_2d_ynvr(float x, float y, float *p)
+{
+	float sigma = p[1];
+
+	float a = hypot(x, y);
+	float r = a ? 1/a : 1/sigma;
+	return r;
+}
+
+SMART_PARAMETER_SILENT(LOGDESP,1.1)
+
+static float kernel_2d_ilogr(float x, float y, float *p)
+{
+	float sigma = p[1];
+
+	float a = hypot(x, y) / sigma;
+	float r = a ? 1/log(LOGDESP()+a) : 1;
+	return r;
+}
+
+static float kernel_2d_logr(float x, float y, float *p)
+{
+	float sigma = p[1];
+	float r = hypot(x, y);
+	float v = r ? -log(r) : sigma;
+	return v;
+}
+
 
 static float kernel_2d_r2logr(float x, float y, float *p)
 {
@@ -368,11 +417,16 @@ void blur_2d(float *y, float *x, int w, int h, int pd,
 	case 'l': f = kernel_2d_laplace;  break;
 	case 'c': f = kernel_2d_cauchy;   break;
 	case 'k': f = kernel_2d_bicauchy;   break;
+	case 'q': f = kernel_2d_logcauchy;   break;
 	case 'd': f = kernel_2d_disk;     break;
 	case 's': f = kernel_2d_square;   break;
 	case 'p': f = kernel_2d_powerlaw2;   break;
+	case 'a': f = kernel_2d_pareto;   break;
 	case 'i': f = kernel_2d_invr;   break;
+	case 'y': f = kernel_2d_ynvr;   break;
+	case 'z': f = kernel_2d_ilogr;   break;
 	case 't': f = kernel_2d_r2logr;   break;
+	case 'o': f = kernel_2d_logr;   break;
 	default: fail("unrecognized kernel name \"%s\"", kernel_id);
 	}
 
@@ -391,6 +445,7 @@ void blur_2d(float *y, float *x, int w, int h, int pd,
 
 	fftwf_free(fk);
 }
+
 
 #ifndef OMIT_BLUR_MAIN
 #define MAIN_BLUR

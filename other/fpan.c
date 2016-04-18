@@ -3,11 +3,12 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 #include "iio.h"
 
 #ifndef FTR_BACKEND
-#define FTR_BACKEND 'f'
+#define FTR_BACKEND 'x'
 #endif
 #include "ftr.c"
 
@@ -53,6 +54,7 @@ struct pan_state {
 	// 2. view port parameters
 	double zoom_factor, offset_x, offset_y;
 	double a, b;
+	double aaa[3], bbb[3];
 
 	// 3. image pyramid
 	float *pyr_rgb[MAX_PYRAMID_LEVELS];
@@ -80,11 +82,41 @@ static float getsample_0(float *x, int w, int h, int i, int j, int l)
 	return x[3*(j*w+i)+l];
 }
 
+// evaluate a frgb image at a point
 static void interpolate_at(float *out, float *x, int w, int h, float p, float q)
 {
 	out[0] = getsample_0(x, w, h, (int)p, (int)q, 0);
 	out[1] = getsample_0(x, w, h, (int)p, (int)q, 1);
 	out[2] = getsample_0(x, w, h, (int)p, (int)q, 2);
+}
+
+// evaluate the shadow of a frgb image (the g and b channels are ignored)
+static
+void interpolate_at_s(float *out, float *x, int w, int h, float p, float q)
+{
+	float oo = getsample_0(x, w, h, 0+(int)p, 0+(int)q, 0);
+	float ox = getsample_0(x, w, h, 1+(int)p, 0+(int)q, 0);
+	float oy = getsample_0(x, w, h, 0+(int)p, 1+(int)q, 0);
+	float od = getsample_0(x, w, h, 1+(int)p, 1+(int)q, 0);
+	float out_s = NAN;
+	float out_si = 0;
+	if (isfinite(oo)) {
+		out_s = 0;
+		if (isfinite(ox) && isfinite(oy) && isfinite(od)) {
+			float gx = ox - oo + od - oy;
+			float gy = oy - oo + od - ox;
+			//float nx[3] = {1, 0, gx};
+			//float ny[3] = {0, 1, gy};
+			float nn[3] = {-gx/2, -gy/2, 1};
+			float ss[3] = {-1, -1, -1};
+			out_s = nn[0]*ss[0] + nn[1]*ss[1] + nn[2]*ss[2];
+		}
+		out_si = oo > 300 ? 255 : 0;
+		out_s = 127 + 10 * out_s;
+	}
+	out[0] = out[1] = out[2] = out_s;
+	out[0] = (out[1]+out_si)/2;
+	out[2] = (out[2]+255-out_si)/2;
 }
 
 // evaluate the value a position (p,q) in image coordinates
@@ -137,6 +169,31 @@ static inline void pixel(float *out, struct pan_state *e, double p, double q)
 	//		out[i] = out1[i];
 	//		//out[i] = (1 - f) * out1[i] + f * out2[i];
 	//}
+}
+
+// pixel shadow
+static inline void pixel_s(float *out, struct pan_state *e, double p, double q)
+{
+	if (e->zoom_factor > 0.9999)
+		interpolate_at_s(out, e->frgb, e->w, e->h, p, q);
+	else {
+		//static int first_run = 1;
+		//if (first_run) {
+		//	fprintf(stderr, "create pyramid\n");
+		//	void create_pyramid(struct pan_state *e);
+		//	create_pyramid(e);
+		//	first_run = 0;
+		//}
+		if(p<0||q<0){out[0]=out[1]=out[2]=0;return;}
+		int s = -0 - log(e->zoom_factor) / log(2);
+		if (s < 0) s = 0;
+		if (s >= MAX_PYRAMID_LEVELS) s = MAX_PYRAMID_LEVELS-1;
+		int sfac = 1<<(s+1);
+		int w = e->pyr_w[s];
+		int h = e->pyr_h[s];
+		float *rgb = e->pyr_rgb[s];
+		interpolate_at_s(out, rgb, w, h, p/sfac, q/sfac);
+	}
 }
 
 static void action_print_value_under_cursor(struct FTR *f, int x, int y)
@@ -198,6 +255,9 @@ static void action_qauto(struct FTR *f)
 
 	e->a = 255 / ( M - m );
 	e->b = 255 * m / ( m - M );
+	e->bbb[0] = e->b;
+	e->bbb[1] = e->b;
+	e->bbb[2] = e->b;
 
 	f->changed = 1;
 }
@@ -212,6 +272,10 @@ static void action_center_contrast_at_point(struct FTR *f, int x, int y)
 	pixel(c, e, p[0], p[1]);
 	float C = (c[0] + c[1] + c[2])/3;
 
+	e->bbb[0] = 127.5 - e->a * c[0];
+	e->bbb[1] = 127.5 - e->a * c[1];
+	e->bbb[2] = 127.5 - e->a * c[2];
+
 	e->b = 127.5 - e->a * C;
 
 	f->changed = 1;
@@ -222,8 +286,11 @@ static void action_contrast_span(struct FTR *f, float factor)
 	struct pan_state *e = f->userdata;
 
 	float c = (127.5 - e->b)/ e->a;
+	float ccc[3];
+	for(int l=0;l<3;l++) ccc[l] = (127.5 - e->bbb[l]) / e->a;
 	e->a *= factor;
 	e->b = 127.5 - e->a * c;
+	for(int l=0;l<3;l++) e->bbb[l] = 127.5 - e->a * ccc[l];
 
 	f->changed = 1;
 }
@@ -277,10 +344,15 @@ static void pan_exposer(struct FTR *f, int b, int m, int x, int y)
 		unsigned char *cc = f->rgb + 3 * (j * f->w + i);
 		for (int l = 0; l < 3; l++)
 		{
-			float g = e->a * c[l] + e->b;
-			if      (g < 0)   cc[l] = 0  ;
-			else if (g > 255) cc[l] = 255;
-			else              cc[l] = g  ;
+			if (!isfinite(c[l]))
+				cc[l] = 0;
+			else {
+				//float g = e->a * c[l] + e->b;
+				float g = e->a * c[l] + e->bbb[l];
+				if      (g < 0)   cc[l] = 0  ;
+				else if (g > 255) cc[l] = 255;
+				else              cc[l] = g  ;
+			}
 		}
 	}
 	f->changed = 1;
@@ -460,7 +532,7 @@ int main_pan(int c, char *v[])
 	create_pyramid(e);
 
 	// open window
-	struct FTR f = ftr_new_window(BAD_MIN(e->w,1200), BAD_MIN(e->h,800));
+	struct FTR f = ftr_new_window(BAD_MIN(e->w,700), BAD_MIN(e->h,500));
 	f.userdata = e;
 	action_reset_zoom_and_position(&f);
 	ftr_set_handler(&f, "expose", pan_exposer);
