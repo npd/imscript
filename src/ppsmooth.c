@@ -4,7 +4,7 @@
 
 
 // construct the symmetric boundary of an image
-static void construct_symmetric_boundary(float *xx, int w, int h)
+static void construct_symmetric_boundary_old(float *xx, int w, int h)
 {
 	float (*x)[w] = (void*)xx;
 
@@ -15,6 +15,10 @@ static void construct_symmetric_boundary(float *xx, int w, int h)
 		x[h-1][0]   -= v / 4;
 		x[0][w-1]   -= v / 4;
 		x[h-1][w-1] -= v / 4;
+		//x[0][0]     -= v / 4;
+		//x[h-1][0]   -= v / 4;
+		//x[0][w-1]   -= v / 4;
+		//x[h-1][w-1] -= v / 4;
 	}
 
 	// vertical sides
@@ -38,6 +42,112 @@ static void construct_symmetric_boundary(float *xx, int w, int h)
 	for (int i = 1; i < w - 1; i++)
 		x[j][i] = NAN;
 }
+
+// construct the symmetric boundary of an image
+static void construct_symmetric_boundary_fancy(float *xx, int w, int h)
+{
+	float (*x)[w] = (void*)xx;
+
+	// global average
+	long double sum = 0;
+	for (int i = 0; i < w*h; i++)
+		sum += xx[i];
+	float avg = sum / (w*h);
+
+	// 4 corners
+	{
+		x[0][0]     -= avg;
+		x[h-1][0]   -= avg;
+		x[0][w-1]   -= avg;
+		x[h-1][w-1] -= avg;
+	}
+
+	// vertical sides
+	for (int j = 1; j < h-1; j++)
+	{
+		float v = x[j][0] + x[j][w-1];
+		float a = 4.0 * j * (h - 1 - j) / ((h-1)*(h-1));
+		x[j][0]   -= a * v / 2  +  (1-a) * avg;
+		x[j][w-1] -= a * v / 2  +  (1-a) * avg;
+	}
+
+	// horizontal sides
+	for (int i = 1; i < w-1; i++)
+	{
+		float v = x[0][i] + x[h-1][i];
+		float a = 4.0 * i * (w - 1 - i) / ((w-1)*(w-1));
+		x[0][i]   -= a * v / 2  +  (1-a) * avg;
+		x[h-1][i] -= a * v / 2  +  (1-a) * avg;
+	}
+
+	// interior
+	for (int j = 1; j < h - 1; j++)
+	for (int i = 1; i < w - 1; i++)
+		x[j][i] = NAN;
+}
+
+static float global_parameter_p = NAN;
+
+// construct the symmetric boundary of an image
+static void construct_symmetric_boundary_fancier(float *xx, int w, int h)
+{
+	float (*x)[w] = (void*)xx;
+
+	// global average
+	long double sum = 0;
+	for (int i = 0; i < w*h; i++)
+		sum += xx[i];
+	float avg = sum / (w*h);
+
+	// 4 corners
+	{
+		x[0][0]     -= avg;
+		x[h-1][0]   -= avg;
+		x[0][w-1]   -= avg;
+		x[h-1][w-1] -= avg;
+	}
+
+	// vertical sides
+	for (int j = 1; j < h-1; j++)
+	{
+		float v = x[j][0] + x[j][w-1];
+		float T = h - 1, a = 1 - pow(2*j/T - 1, 2*global_parameter_p);
+		x[j][0]   -= a * v / 2  +  (1-a) * avg;
+		x[j][w-1] -= a * v / 2  +  (1-a) * avg;
+	}
+
+	// horizontal sides
+	for (int i = 1; i < w-1; i++)
+	{
+		float v = x[0][i] + x[h-1][i];
+		float T = w - 1, a = 1 - pow(2*i/T - 1, 2*global_parameter_p);
+		x[0][i]   -= a * v / 2  +  (1-a) * avg;
+		x[h-1][i] -= a * v / 2  +  (1-a) * avg;
+	}
+
+	// interior
+	for (int j = 1; j < h - 1; j++)
+	for (int i = 1; i < w - 1; i++)
+		x[j][i] = NAN;
+}
+
+static void construct_symmetric_boundary(float *x, int w, int h)
+{
+	long double sum = 0;
+	for (int i = 0; i < w*h; i++)
+		sum += x[i];
+	float avg = sum / (w*h);
+
+	for (int j = 0; j < h; j++)
+	for (int i = 0; i < w; i++)
+		if (i == 0 || j == 0 || i == w-1 || j == h-1)
+			x[j*w+i] -= avg;
+		else
+			x[j*w+i] = NAN;
+}
+
+static void (*global_boundary_function)(float*,int,int)
+	= construct_symmetric_boundary;
 
 // extrapolate by nearest value (useful for Neumann boundary conditions)
 static float getpixel(float *x, int w, int h, int i, int j)
@@ -133,7 +243,7 @@ void simplest_inpainting(float *x, int w, int h)
 void ppsmooth(float *y, float *x, int w, int h)
 {
 	memcpy(y, x, w*h*sizeof*x);
-	construct_symmetric_boundary(y, w, h);
+	global_boundary_function(y, w, h);
 	simplest_inpainting(y, w, h);
 	for (int i = 0; i < w*h; i++)
 		y[i] = x[i] - y[i];
@@ -154,6 +264,9 @@ void ppsmooth_split(float *y, float *x, int w, int h, int pd)
 int main(int c, char *v[])
 {
 	char *filename_m = pick_option(&c, &v, "m", "");
+	bool old_boundary = pick_option(&c, &v, "o", NULL);
+	bool fan_boundary = pick_option(&c, &v, "f", NULL);
+	global_parameter_p = atof(pick_option(&c, &v, "p", "NAN"));
 	if ((c != 1 && c != 2 && c != 3) || (c>1 && !strcmp(v[1], "-h"))) {
 		fprintf(stderr, "usage:\n\t%s [in [out]]\n", *v);
 		//                          0  1   2
@@ -161,6 +274,22 @@ int main(int c, char *v[])
 	}
 	char *filename_i = c > 1 ? v[1] : "-";
 	char *filename_o = c > 2 ? v[2] : "-";
+	if (old_boundary && !fan_boundary)
+	{
+		fprintf(stderr, "using old boundary\n");
+		global_boundary_function = construct_symmetric_boundary_old;
+	}
+	if (fan_boundary)
+	{
+		fprintf(stderr, "using fancy boundary\n");
+		global_boundary_function = construct_symmetric_boundary_fancy;
+	}
+	if (isfinite(global_parameter_p))
+	{
+		fprintf(stderr, "using fancier boundary (p=%g)\n",
+				global_parameter_p);
+		global_boundary_function = construct_symmetric_boundary_fancier;
+	}
 
 	int w, h, pd;
 	float *x = iio_read_image_float_split(filename_i, &w, &h, &pd);

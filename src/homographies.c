@@ -46,6 +46,12 @@ static void compose_homographies(double C[3][3], double A[3][3], double B[3][3])
 static void homography_from_four_points(double H[3][3],
 		double x[2], double w[2], double z[2], double y[2])
 {
+	// We have to compute the following 9 coefficients of H:
+	//
+	//     a b p
+	//     c d q
+	//     r s t
+
 	// fix the degree of freedom (assuming the four points are finite)
 	double t = 1;
 
@@ -86,14 +92,4 @@ static void homography_from_eight_points(double H[3][3],
 	homography_from_four_points(H2, a, b, c, d);
 	invert_homography(iH1, H1);
 	compose_homographies(H, H2, iH1);
-}
-
-// compute the vector product of two vectors
-static void vector_product(double axb[3], double a[3], double b[3])
-{
-	// a0 a1 a2
-	// b0 b1 b2
-	axb[0] = a[1] * b[2] - a[2] * b[1];
-	axb[1] = a[2] * b[0] - a[0] * b[2];
-	axb[2] = a[0] * b[1] - a[1] * b[0];
 }
